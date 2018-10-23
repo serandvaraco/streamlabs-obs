@@ -27,6 +27,8 @@ import { CrashReporterService } from 'services/crash-reporter';
 import { PlatformAppsService } from 'services/platform-apps';
 import { AnnouncementsService } from 'services/announcements';
 
+const path = require('path');
+
 interface IAppState {
   loading: boolean;
   argv: string[];
@@ -72,9 +74,19 @@ export class AppService extends StatefulService<IAppState> {
   @track('app_start')
   async load() {
     this.START_LOADING();
+    const appData = electron.remote.app.getPath('userData');
+
+    // Initialize obs-studio-server
+    // Host a new IPC Server and connect to it.
+    obs.IPC.connect(electron.remote.process.env.SLOBS_IPC_PATH);
+    obs.NodeObs.SetWorkingDirectory(path.join(
+      appData.replace('app.asar', 'app.asar.unpacked'),
+          'node_modules',
+          'obs-studio-node')
+    );
 
     // Initialize OBS
-    obs.NodeObs.OBS_API_initAPI('en-US', electron.remote.process.env.SLOBS_IPC_USERDATA);
+    obs.NodeObs.OBS_API_initAPI('en-US', appData);
 
     // We want to start this as early as possible so that any
     // exceptions raised while loading the configuration are
@@ -140,6 +152,7 @@ export class AppService extends StatefulService<IAppState> {
       this.crashReporterService.endShutdown();
       obs.NodeObs.OBS_service_removeCallback();
       obs.NodeObs.OBS_API_destroyOBS_API();
+      obs.IPC.disconnect();
       electron.ipcRenderer.send('shutdownComplete');
     }, 300);
   }

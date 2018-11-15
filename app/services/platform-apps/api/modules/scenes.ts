@@ -1,4 +1,11 @@
-import { Module, EApiPermissions, apiMethod, apiEvent, NotImplementedError, IApiContext } from './module';
+import {
+  Module,
+  EApiPermissions,
+  apiMethod,
+  apiEvent,
+  NotImplementedError,
+  IApiContext
+} from './module';
 import { ScenesService, Scene, TSceneNode } from 'services/scenes';
 import { Inject } from 'util/injector';
 import { Subject } from 'rxjs';
@@ -41,7 +48,6 @@ interface IScene {
 }
 
 export class ScenesModule extends Module {
-
   moduleName = 'Scenes';
   permissions = [EApiPermissions.ScenesSources];
 
@@ -76,6 +82,23 @@ export class ScenesModule extends Module {
   @apiMethod()
   getScenes() {
     return this.scenesService.getScenes().map(scene => this.serializeScene(scene));
+  }
+
+  @apiMethod()
+  getScene(_ctx: IApiContext, id: string): IScene | null {
+    const scene = this.scenesService.getScene(id);
+
+    return scene ? this.serializeScene(scene) : null;
+  }
+
+  @apiMethod()
+  getSceneItem(
+    _ctx: IApiContext,
+    id: string
+  ): ISceneItem | ISceneItemFolder | null {
+    const sceneItem = this.scenesService.getSceneItem(id);
+
+    return sceneItem ? this.serializeNode(sceneItem) : null;
   }
 
   @apiMethod()
@@ -165,5 +188,4 @@ export class ScenesModule extends Module {
       return item;
     }
   }
-
 }

@@ -200,6 +200,7 @@ export class TwitchService extends Service implements IPlatformService {
       .then(json => json.results[0].hits);
   }
 
+  @requiresToken()
   getStreams() {
     return getUserStreams(this.twitchId, this.getHeaders(true));
   }

@@ -1,15 +1,11 @@
 import { Observable } from 'rxjs/Observable';
-import { from } from 'rxjs/observable/from';
-import { empty } from 'rxjs/observable/empty';
-import 'rxjs/add/observable/fromPromise';
-import { handleErrors } from '../../../util/requests';
-import { contramap, ordString } from 'fp-ts/lib/Ord';
+import { ajax } from 'rxjs/observable/dom/ajax';
+import { map } from 'rxjs/operators';
 import { sortBy1 } from 'fp-ts/lib/Array';
 import { compose } from 'fp-ts/lib/function';
 import { fromNullable } from 'fp-ts/lib/Option';
+import { contramap, ordString } from 'fp-ts/lib/Ord';
 import { TwitchPagination } from './pagination';
-import { fromPromise } from 'rxjs/observable/fromPromise';
-import { concat, mergeMap } from 'rxjs/operators';
 
 /**
  * A tag on Twitch that could be assigned to a Stream.
@@ -44,6 +40,13 @@ type TwitchTagsResponse = {
   pagination: TwitchPagination;
 };
 
+export interface TwitchRequestHeaders {
+  Accept: 'application/vnd.twitchtv.v5+json';
+  Authorization?: string;
+  'Client-Id': string;
+  'Content-Type': 'application/json';
+}
+
 /**
  * Intermediate representation of a Twitch tag response so
  * we can request subsequent pages of tags.
@@ -51,38 +54,49 @@ type TwitchTagsResponse = {
 interface PaginatedResponse {
   items: Array<TwitchTag>;
   cursor: string;
+  /*
+   * We need to track oldCursor since apparently Twitch API doesn't
+   * unset `cursor` in the last response. We check for equality later.
+   */
+  oldCursor: string;
 }
 
-const requestTags = (headers: Headers, cursor: string = ''): Observable<PaginatedResponse> =>
-  fromPromise(
-    fetch(`https://api.twitch.tv/helix/tags/streams?first=100&after=${cursor}`, { headers })
-      .then(handleErrors)
-      .then<TwitchTagsResponse>(response => response.json())
-      .then(response => ({ items: response.data, cursor: response.pagination.cursor }))
-  );
+const requestTags = (
+  headers: TwitchRequestHeaders,
+  cursor: string,
+): Observable<PaginatedResponse> =>
+  ajax
+    .getJSON<TwitchTagsResponse>(
+      `https://api.twitch.tv/helix/tags/streams?first=100&after=${cursor}`,
+      headers,
+    )
+    .pipe(
+      map(response => ({
+        cursor: response.pagination.cursor,
+        items: response.data,
+        oldCursor: cursor,
+      })),
+    );
 
 /**
  * Fetch all available tags that Twitch provides that are not
  * automatically generated. This will use the provided pagination
  * to request the whole dataset of tags.
  *
- *
  * @param headers Headers including OAuth Token and App ID
  */
 // FIXME: Twitch Pagination seems broken regarding cursor
-export const getAllTags = async (headers: Headers): Promise<TwitchTag[]> => {
-  return requestTags(headers)
+export const getAllTags = (headers: TwitchRequestHeaders): Promise<Array<TwitchTag>> =>
+  requestTags(headers, '')
     .pipe(
-      mergeMap(
-        ({ items, cursor }): any => {
-          const items$ = from(items);
-          const next$ = cursor ? requestTags(headers, cursor) : empty<PaginatedResponse>();
-          return concat(items$, next$);
-        }
-      )
+      // expand(
+      //   ({ cursor, oldCursor }) =>
+      //     cursor && cursor !== oldCursor ? requestTags(headers, cursor) : empty(),
+      //   1,
+      // ),
+      map(({ items }) => items.filter(tag => !tag.is_auto)),
     )
-    .toPromise() as Promise<TwitchTag[]>;
-};
+    .toPromise();
 
 const getLabelFor = (tag: TwitchTag, locale: string): string =>
   tag.localization_names[locale.toLowerCase()] || tag.localization_names['en-us'];
@@ -90,41 +104,24 @@ const getLabelFor = (tag: TwitchTag, locale: string): string =>
 const assignLabels = (locale: string) => (tags: Array<TwitchTag>): Array<TwitchTagWithLabel> =>
   tags.map(tag => ({
     ...tag,
-    name: getLabelFor(tag, locale)
+    name: getLabelFor(tag, locale),
   }));
 
 const byName = contramap((tag: TwitchTagWithLabel) => tag.name, ordString);
 const sortByName = sortBy1(byName, []);
 
-export const prepareOptions = (locale: string, tags: Array<TwitchTag> | undefined): Array<TwitchTagWithLabel> =>
+export const prepareOptions = (
+  locale: string,
+  tags: Array<TwitchTag> | undefined,
+): Array<TwitchTagWithLabel> =>
   fromNullable(tags)
     .map(
       compose(
         sortByName,
-        assignLabels(locale)
-      )
+        assignLabels(locale),
+      ),
     )
     .getOrElse([]);
-
-export const updateTags = (headers: Headers) => (tags: Array<TwitchTagWithLabel>) => (streamId: string) => {
-  const toAdd = tags;
-
-  // TODO: how to track removals if we can't even get the active list w/o going live
-  const toRemove: Array<TwitchTagWithLabel> = [];
-
-  const params = {
-    ...addParam('add', toAdd),
-    ...addParam('remove', toRemove)
-  };
-
-  return fetch(
-    new Request(`https://api.twitch.tv/helix/tags/streams?broadcaster_id=${streamId}`, {
-      headers,
-      method: 'PUT',
-      body: JSON.stringify(params)
-    })
-  );
-};
 
 /**
  * Add a parameter, either "add" or "remove" with tag IDs separated by commas
@@ -135,4 +132,26 @@ const addParam = (op: 'add' | 'remove', tags: Array<TwitchTagWithLabel>) => {
   }
 
   return { [op]: tags.map(tag => tag.tag_id).join(',') };
+};
+
+export const updateTags = (headers: TwitchRequestHeaders) => (tags: Array<TwitchTagWithLabel>) => (
+  streamId: string,
+) => {
+  const toAdd = tags;
+
+  // TODO: how to track removals if we can't even get the active list w/o going live
+  const toRemove: Array<TwitchTagWithLabel> = [];
+
+  const params = {
+    ...addParam('add', toAdd),
+    ...addParam('remove', toRemove),
+  };
+
+  return ajax
+    .put(
+      `https://api.twitch.tv/helix/tags/streams?broadcaster_id=${streamId}`,
+      JSON.stringify(params),
+      headers,
+    )
+    .toPromise();
 };

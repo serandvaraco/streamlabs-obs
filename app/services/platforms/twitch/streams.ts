@@ -1,5 +1,9 @@
-import { handleErrors } from '../../../util/requests';
+import { Observable } from 'rxjs/Observable';
+import { ajax } from 'rxjs/observable/dom/ajax';
+import { map } from 'rxjs/operator/map';
 import { TwitchPagination } from './pagination';
+import { TwitchRequestHeaders } from './tags';
+import 'rxjs/add/operator/map';
 
 export type Stream = {
   id: string;
@@ -20,10 +24,7 @@ export type StreamsResponse = {
   pagination: TwitchPagination;
 };
 
-export const getUserStreams = (userId: string, headers: Headers): Promise<Array<Stream>> =>
-  fetch(`https://api.twitch.tv/helix/streams?user_id=${userId}`, {
-    headers
-  })
-    .then(handleErrors)
-    .then<StreamsResponse>(response => response.json())
-    .then(response => response.data);
+export const getUserStreams = (userId: string, headers: TwitchRequestHeaders) =>
+  ajax
+    .getJSON<StreamsResponse>(`https://api.twitch.tv/helix/streams?user_id=${userId}`, headers)
+    .map(response => response.data);

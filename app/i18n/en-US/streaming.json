@@ -45,6 +45,7 @@
   "viewers": "viewers",
   "Refresh Chat": "Refresh Chat",
   "Your chat is currently offline": "Your chat is currently offline",
-  "Set path in Settings > Output.": "Set path in Settings > Output."
-
+  "Set path in Settings > Output.": "Set path in Settings > Output.",
+  "Select stream tags": "Select stream tags",
+  "Tag not found": "Tag not found"
 }

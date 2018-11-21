@@ -2,6 +2,7 @@ import { TwitchService } from './twitch';
 import { YoutubeService } from './youtube';
 import { MixerService } from './mixer';
 import { FacebookService } from './facebook';
+import { StreamingContext } from '../streaming';
 
 export interface IChannelInfo {
   title: string;
@@ -16,7 +17,6 @@ export interface IGame {
 // All platform services should implement
 // this interface.
 export interface IPlatformService {
-
   authWindowOptions: Electron.BrowserWindowConstructorOptions;
 
   authUrl: string;
@@ -40,6 +40,8 @@ export interface IPlatformService {
   getChatUrl: (mode: string) => Promise<string>;
 
   beforeGoLive: () => Promise<any>;
+
+  afterGoLive?: (context?: StreamingContext) => Promise<void>;
 }
 
 export interface IPlatformAuth {

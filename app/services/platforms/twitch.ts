@@ -1,13 +1,16 @@
 import { Service } from 'services/service';
-import { IPlatformService, IPlatformAuth, IChannelInfo, IGame } from '.';
+import { IChannelInfo, IGame, IPlatformAuth, IPlatformService } from '.';
 import { HostsService } from 'services/hosts';
 import { SettingsService } from 'services/settings';
 import { Inject } from 'util/injector';
-import { handleErrors, requiresToken, authorizedHeaders } from 'util/requests';
+import { authorizedHeaders, handleErrors, requiresToken } from 'util/requests';
 import { UserService } from 'services/user';
+import { getAllTags, updateTags } from './twitch/tags';
+import { getUserStreams } from './twitch/streams';
+import { head } from 'fp-ts/lib/Array';
+import { StreamingContext } from '../streaming';
 
 export class TwitchService extends Service implements IPlatformService {
-
   @Inject() hostsService: HostsService;
   @Inject() settingsService: SettingsService;
   @Inject() userService: UserService;
@@ -22,8 +25,9 @@ export class TwitchService extends Service implements IPlatformService {
 
   get authUrl() {
     const host = this.hostsService.streamlabs;
-    const query = `_=${Date.now()}&skip_splash=true&external=electron&twitch&force_verify&` +
-      'scope=channel_read,channel_editor&origin=slobs';
+    const query =
+      `_=${Date.now()}&skip_splash=true&external=electron&twitch&force_verify&` +
+      'scope=channel_read,channel_editor,user:edit:broadcast&origin=slobs';
     return `https://${host}/slobs/login?${query}`;
   }
 
@@ -34,7 +38,6 @@ export class TwitchService extends Service implements IPlatformService {
   get twitchId() {
     return this.userService.platform.id;
   }
-
 
   getHeaders(authorized = false): Headers {
     const headers = new Headers();
@@ -47,7 +50,6 @@ export class TwitchService extends Service implements IPlatformService {
 
     return headers;
   }
-
 
   // TODO: Some of this code could probably eventually be
   // shared with the Youtube platform.
@@ -80,26 +82,24 @@ export class TwitchService extends Service implements IPlatformService {
     return fetch(request)
       .then(handleErrors)
       .then(response => response.json())
-      .then(response =>
-        this.userService.updatePlatformToken(response.access_token)
-      );
+      .then(response => this.userService.updatePlatformToken(response.access_token));
   }
 
   @requiresToken()
   fetchRawChannelInfo() {
     const headers = this.getHeaders(true);
-    const request = new Request('https://api.twitch.tv/kraken/channel', { headers });
+    const request = new Request('https://api.twitch.tv/kraken/channel', {
+      headers
+    });
 
     return fetch(request)
       .then(handleErrors)
       .then(response => response.json());
   }
 
-
   fetchStreamKey(): Promise<string> {
     return this.fetchRawChannelInfo().then(json => json.stream_key);
   }
-
 
   fetchChannelInfo(): Promise<IChannelInfo> {
     return this.fetchRawChannelInfo().then(json => {
@@ -120,7 +120,7 @@ export class TwitchService extends Service implements IPlatformService {
       .then(response => response.json())
       .then(json => {
         if (json[0] && json[0].login) {
-          return { username: (json[0].login as string) };
+          return { username: json[0].login as string };
         } else {
           return {};
         }
@@ -134,7 +134,7 @@ export class TwitchService extends Service implements IPlatformService {
     return fetch(request)
       .then(handleErrors)
       .then(response => response.json())
-      .then(json => json.stream ? json.stream.viewers : 0);
+      .then(json => (json.stream ? json.stream.viewers : 0));
   }
 
   @requiresToken()
@@ -167,17 +167,25 @@ export class TwitchService extends Service implements IPlatformService {
     return Promise.resolve(`https://twitch.tv/popout/${this.userService.platform.username}/chat?${nightMode}`);
   }
 
+  @requiresToken()
+  getAllTags() {
+    return getAllTags(this.getHeaders(true));
+  }
+
   searchCommunities(searchString: string) {
     const headers = this.getHeaders();
 
     const data = {
-      requests:[
-        { indexName: 'community',
+      requests: [
+        {
+          indexName: 'community',
           params: `query=${searchString}&page=0&hitsPerPage=50&numericFilters=&facets=*&facetFilters=`
         }
-      ]};
+      ]
+    };
 
-    const communitySearchUrl = 'https://xluo134hor-dsn.algolia.net/1/indexes/*/queries' +
+    const communitySearchUrl =
+      'https://xluo134hor-dsn.algolia.net/1/indexes/*/queries' +
       '?x-algolia-application-id=XLUO134HOR&x-algolia-api-key=d157112f6fc2cab93ce4b01227c80a6d';
 
     const request = new Request(communitySearchUrl, {
@@ -192,7 +200,20 @@ export class TwitchService extends Service implements IPlatformService {
       .then(json => json.results[0].hits);
   }
 
-  beforeGoLive() {
-    return Promise.resolve();
+  getStreams() {
+    return getUserStreams(this.twitchId, this.getHeaders(true));
+  }
+
+  async beforeGoLive() {}
+
+  @requiresToken()
+  async afterGoLive(context: StreamingContext) {
+    const streams = await this.getStreams();
+
+    // Assume the first stream is the stream we want to set tags for
+    head(streams)
+      .map(stream => stream.id)
+      .map(updateTags(this.getHeaders(true))(context.twitchTags))
+
   }
 }

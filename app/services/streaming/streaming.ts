@@ -1,4 +1,4 @@
-import { StatefulService, mutation } from 'services/stateful-service';
+import { mutation, StatefulService } from 'services/stateful-service';
 import * as obs from '../../../obs-api';
 import { Inject } from 'util/injector';
 import moment from 'moment';
@@ -7,19 +7,15 @@ import { SettingsService } from 'services/settings';
 import { WindowsService } from 'services/windows';
 import { Subject } from 'rxjs/Subject';
 import electron from 'electron';
-import {
-  IStreamingServiceApi,
-  IStreamingServiceState,
-  EStreamingState,
-  ERecordingState
-} from './streaming-api';
+import { ERecordingState, EStreamingState, IStreamingServiceApi, IStreamingServiceState } from './streaming-api';
 import { UsageStatisticsService } from 'services/usage-statistics';
 import { $t } from 'services/i18n';
 import { StreamInfoService } from 'services/stream-info';
-import { getPlatformService, IPlatformAuth, TPlatform, IPlatformService } from 'services/platforms';
+import { getPlatformService } from 'services/platforms';
 import { UserService } from 'services/user';
 import { AnnouncementsService } from 'services/announcements';
-import { NotificationsService, ENotificationType, INotification } from 'services/notifications';
+import { ENotificationType, INotification, NotificationsService } from 'services/notifications';
+import { TwitchTag, TwitchTagWithLabel } from '../platforms/twitch/tags';
 
 enum EOBSOutputType {
   Streaming = 'streaming',
@@ -42,8 +38,12 @@ interface IOBSOutputSignalInfo {
   error: string;
 }
 
-export class StreamingService extends StatefulService<IStreamingServiceState>
-  implements IStreamingServiceApi {
+export interface StreamingContext  {
+  twitchTags?: Array<TwitchTagWithLabel>,
+  allTwitchTags?: Array<TwitchTag>,
+}
+
+export class StreamingService extends StatefulService<IStreamingServiceState> implements IStreamingServiceApi {
   @Inject() settingsService: SettingsService;
   @Inject() windowsService: WindowsService;
   @Inject() usageStatisticsService: UsageStatisticsService;
@@ -67,12 +67,15 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
     recordingStatusTime: new Date().toISOString()
   };
 
+  /**
+   * Streaming context that's passed if we need to use in an after hook
+   */
+  context: StreamingContext = null;
+
   init() {
-    obs.NodeObs.OBS_service_connectOutputSignals(
-      (info: IOBSOutputSignalInfo) => {
-        this.handleOBSOutputSignal(info);
-      }
-    );
+    obs.NodeObs.OBS_service_connectOutputSignals((info: IOBSOutputSignalInfo) => {
+      this.handleOBSOutputSignal(info);
+    });
   }
 
   getModel() {
@@ -90,8 +93,8 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
   /**
    * @deprecated Use toggleStreaming instead
    */
-  startStreaming() {
-    this.toggleStreaming();
+  startStreaming(ctx?: StreamingContext) {
+    this.toggleStreaming(ctx);
   }
 
   /**
@@ -105,9 +108,7 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
     const shouldConfirm = this.settingsService.state.General.WarnBeforeStartingStream;
     const confirmText = 'Are you sure you want to start streaming?';
     if (shouldConfirm && !confirm(confirmText)) return;
-    this.powerSaveId = electron.remote.powerSaveBlocker.start(
-      'prevent-display-sleep'
-    );
+    this.powerSaveId = electron.remote.powerSaveBlocker.start('prevent-display-sleep');
     obs.NodeObs.OBS_service_startStreaming();
     const recordWhenStreaming = this.settingsService.state.General.RecordWhenStreaming;
     if (recordWhenStreaming && this.state.recordingStatus === ERecordingState.Offline) {
@@ -115,7 +116,9 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
     }
   }
 
-  toggleStreaming() {
+  toggleStreaming(ctx?: StreamingContext) {
+    this.context = ctx;
+
     if (this.state.streamingStatus === EStreamingState.Offline) {
       if (this.userService.isLoggedIn && this.userService.platform) {
         const service = getPlatformService(this.userService.platform.type);
@@ -130,8 +133,7 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
       this.state.streamingStatus === EStreamingState.Starting ||
       this.state.streamingStatus === EStreamingState.Live
     ) {
-      const shouldConfirm = this.settingsService.state.General
-        .WarnBeforeStoppingStream;
+      const shouldConfirm = this.settingsService.state.General.WarnBeforeStoppingStream;
       const confirmText = $t('Are you sure you want to stop streaming?');
 
       if (shouldConfirm && !confirm(confirmText)) return;
@@ -142,12 +144,8 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
 
       obs.NodeObs.OBS_service_stopStreaming(false);
 
-      const keepRecording = this.settingsService.state.General
-        .KeepRecordingWhenStreamStops;
-      if (
-        !keepRecording &&
-        this.state.recordingStatus === ERecordingState.Recording
-      ) {
+      const keepRecording = this.settingsService.state.General.KeepRecordingWhenStreamStops;
+      if (!keepRecording && this.state.recordingStatus === ERecordingState.Recording) {
         this.toggleRecording();
       }
 
@@ -215,8 +213,7 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
       this.state.streamingStatus === EStreamingState.Starting ||
       this.state.streamingStatus === EStreamingState.Ending
     ) {
-      const elapsedTime =
-        moment().unix() - this.streamingStateChangeTime.unix();
+      const elapsedTime = moment().unix() - this.streamingStateChangeTime.unix();
       return Math.max(this.delaySeconds - elapsedTime, 0);
     }
 
@@ -229,9 +226,10 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
    */
   get formattedDurationInCurrentStreamingState() {
     const formattedTime = this.formattedDurationSince(this.streamingStateChangeTime);
-    if (formattedTime === '03:50:00' && this.userService.platform.type ===  'facebook') {
+    if (formattedTime === '03:50:00' && this.userService.platform.type === 'facebook') {
       const msg = $t('You are 10 minutes away from the 4 hour stream limit');
-      const existingTimeupNotif = this.notificationsService.getUnread()
+      const existingTimeupNotif = this.notificationsService
+        .getUnread()
         .filter((notice: INotification) => notice.message === msg);
       if (existingTimeupNotif.length !== 0) return formattedTime;
       this.notificationsService.push({
@@ -250,7 +248,8 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
 
   private sendReconnectingNotification() {
     const msg = $t('Stream has disconnected, attempting to reconnect.');
-    const existingReconnectNotif = this.notificationsService.getUnread()
+    const existingReconnectNotif = this.notificationsService
+      .getUnread()
       .filter((notice: INotification) => notice.message === msg);
     if (existingReconnectNotif.length !== 0) return;
     this.notificationsService.push({
@@ -262,7 +261,8 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
   }
 
   private clearReconnectingNotification() {
-    const notice = this.notificationsService.getAll()
+    const notice = this.notificationsService
+      .getAll()
       .find((notice: INotification) => notice.message === $t('Stream has disconnected, attempting to reconnect.'));
     if (!notice) return;
     this.notificationsService.markAsRead(notice.id);
@@ -287,6 +287,9 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
       if (info.signal === EOBSOutputSignal.Start) {
         this.SET_STREAMING_STATUS(EStreamingState.Live, time);
         this.streamingStatusChange.next(EStreamingState.Live);
+
+        // TODO: fire and forget promise
+        this.runPlatformAfterGoLiveHook();
 
         let streamEncoderInfo: Dictionary<string> = {};
         let game: string = null;
@@ -345,14 +348,11 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
       let errorText = '';
 
       if (info.code === obs.EOutputCode.BadPath) {
-        errorText =
-          $t('Invalid Path or Connection URL.  Please check your settings to confirm that they are valid.');
+        errorText = $t('Invalid Path or Connection URL.  Please check your settings to confirm that they are valid.');
       } else if (info.code === obs.EOutputCode.ConnectFailed) {
-        errorText =
-          $t('Failed to connect to the streaming server.  Please check your internet connection.');
+        errorText = $t('Failed to connect to the streaming server.  Please check your internet connection.');
       } else if (info.code === obs.EOutputCode.Disconnected) {
-        errorText =
-          $t('Disconnected from the streaming server.  Please check your internet connection.');
+        errorText = $t('Disconnected from the streaming server.  Please check your internet connection.');
       } else if (info.code === obs.EOutputCode.InvalidStream) {
         errorText =
           $t('Could not access the specified channel or stream key, please double-check your stream key.  ') +
@@ -381,5 +381,14 @@ export class StreamingService extends StatefulService<IStreamingServiceState>
   private SET_RECORDING_STATUS(status: ERecordingState, time: string) {
     this.state.recordingStatus = status;
     this.state.recordingStatusTime = time;
+  }
+
+  private runPlatformAfterGoLiveHook() {
+    if (this.userService.isLoggedIn && this.userService.platform) {
+      const service = getPlatformService(this.userService.platform.type);
+      if (typeof service.afterGoLive === 'function') {
+        service.afterGoLive(this.context);
+      }
+    }
   }
 }

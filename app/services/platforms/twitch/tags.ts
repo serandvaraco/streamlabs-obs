@@ -1,6 +1,7 @@
 import { Observable } from 'rxjs/Observable';
+import { concatMap, expand, filter, map, toArray } from 'rxjs/operators';
+import { empty } from 'rxjs/observable/empty';
 import { ajax } from 'rxjs/observable/dom/ajax';
-import { map } from 'rxjs/operators';
 import { sortBy1 } from 'fp-ts/lib/Array';
 import { compose } from 'fp-ts/lib/function';
 import { fromNullable } from 'fp-ts/lib/Option';
@@ -28,7 +29,7 @@ export type TwitchTag = {
 };
 
 /**
- * TwichTag with a label in the user's locale or en-US as fallback
+ * TwitchTag with a label in the user's locale or en-US as fallback
  */
 export type TwitchTagWithLabel = TwitchTag & { name: string };
 
@@ -54,28 +55,22 @@ export interface TwitchRequestHeaders {
 interface PaginatedResponse {
   items: Array<TwitchTag>;
   cursor: string;
-  /*
-   * We need to track oldCursor since apparently Twitch API doesn't
-   * unset `cursor` in the last response. We check for equality later.
-   */
-  oldCursor: string;
 }
 
 const requestTags = (
   headers: TwitchRequestHeaders,
-  cursor: string,
+  cursor: string
 ): Observable<PaginatedResponse> =>
   ajax
     .getJSON<TwitchTagsResponse>(
       `https://api.twitch.tv/helix/tags/streams?first=100&after=${cursor}`,
-      headers,
+      headers
     )
     .pipe(
       map(response => ({
         cursor: response.pagination.cursor,
-        items: response.data,
-        oldCursor: cursor,
-      })),
+        items: response.data
+      }))
     );
 
 /**
@@ -85,26 +80,28 @@ const requestTags = (
  *
  * @param headers Headers including OAuth Token and App ID
  */
-// FIXME: Twitch Pagination seems broken regarding cursor
-export const getAllTags = (headers: TwitchRequestHeaders): Promise<Array<TwitchTag>> =>
+export const getAllTags = (
+  headers: TwitchRequestHeaders
+): Promise<Array<TwitchTag>> =>
   requestTags(headers, '')
     .pipe(
-      // expand(
-      //   ({ cursor, oldCursor }) =>
-      //     cursor && cursor !== oldCursor ? requestTags(headers, cursor) : empty(),
-      //   1,
-      // ),
-      map(({ items }) => items.filter(tag => !tag.is_auto)),
+      expand(({ cursor }) => (cursor ? requestTags(headers, cursor) : empty())),
+      concatMap(({ items }) => items),
+      filter(tag => !tag.is_auto),
+      toArray()
     )
     .toPromise();
 
 const getLabelFor = (tag: TwitchTag, locale: string): string =>
-  tag.localization_names[locale.toLowerCase()] || tag.localization_names['en-us'];
+  tag.localization_names[locale.toLowerCase()] ||
+  tag.localization_names['en-us'];
 
-const assignLabels = (locale: string) => (tags: Array<TwitchTag>): Array<TwitchTagWithLabel> =>
+const assignLabels = (locale: string) => (
+  tags: Array<TwitchTag>
+): Array<TwitchTagWithLabel> =>
   tags.map(tag => ({
     ...tag,
-    name: getLabelFor(tag, locale),
+    name: getLabelFor(tag, locale)
   }));
 
 const byName = contramap((tag: TwitchTagWithLabel) => tag.name, ordString);
@@ -112,15 +109,10 @@ const sortByName = sortBy1(byName, []);
 
 export const prepareOptions = (
   locale: string,
-  tags: Array<TwitchTag> | undefined,
+  tags: Array<TwitchTag> | undefined
 ): Array<TwitchTagWithLabel> =>
   fromNullable(tags)
-    .map(
-      compose(
-        sortByName,
-        assignLabels(locale),
-      ),
-    )
+    .map(compose(sortByName, assignLabels(locale)))
     .getOrElse([]);
 
 /**
@@ -134,9 +126,9 @@ const addParam = (op: 'add' | 'remove', tags: Array<TwitchTagWithLabel>) => {
   return { [op]: tags.map(tag => tag.tag_id).join(',') };
 };
 
-export const updateTags = (headers: TwitchRequestHeaders) => (tags: Array<TwitchTagWithLabel>) => (
-  streamId: string,
-) => {
+export const updateTags = (headers: TwitchRequestHeaders) => (
+  tags: Array<TwitchTagWithLabel>
+) => (streamId: string) => {
   const toAdd = tags;
 
   // TODO: how to track removals if we can't even get the active list w/o going live
@@ -144,14 +136,14 @@ export const updateTags = (headers: TwitchRequestHeaders) => (tags: Array<Twitch
 
   const params = {
     ...addParam('add', toAdd),
-    ...addParam('remove', toRemove),
+    ...addParam('remove', toRemove)
   };
 
   return ajax
     .put(
       `https://api.twitch.tv/helix/tags/streams?broadcaster_id=${streamId}`,
       JSON.stringify(params),
-      headers,
+      headers
     )
     .toPromise();
 };

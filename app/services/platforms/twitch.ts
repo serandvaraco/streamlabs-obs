@@ -49,20 +49,20 @@ export class TwitchService extends Service implements IPlatformService {
     return this.userService.platform.id;
   }
 
-  getRawHeaders(authorized = false) {
+  getRawHeaders(authorized = false, isNewApi = false) {
     const map: TwitchRequestHeaders = {
       'Client-Id': this.clientId,
       Accept: 'application/vnd.twitchtv.v5+json',
       'Content-Type': 'application/json',
     };
 
-    return authorized ? { ...map, Authorization: `OAuth ${this.oauthToken}` } : map;
+    return authorized ? { ...map, Authorization: `${isNewApi ? 'Bearer' : 'OAuth'} ${this.oauthToken}` } : map;
   }
 
-  getHeaders(authorized = false): Headers {
+  getHeaders(authorized = false, isNewApi = false): Headers {
     const headers = new Headers();
 
-    Object.entries(this.getRawHeaders(authorized)).forEach(([key, value]) => {
+    Object.entries(this.getRawHeaders(authorized, isNewApi)).forEach(([key, value]) => {
       headers.append(key, value);
     });
 
@@ -240,7 +240,7 @@ export class TwitchService extends Service implements IPlatformService {
           // Assume the first stream is the stream we want to set tags for
           head(streams)
             .map(stream => stream.id)
-            .map(updateTags(this.getRawHeaders(true))(context.twitchTags));
+            .map(updateTags(this.getRawHeaders(true, true))(context.twitchTags));
         }),
       )
       .toPromise();

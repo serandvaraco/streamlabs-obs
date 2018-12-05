@@ -231,18 +231,6 @@ export class TwitchService extends Service implements IPlatformService {
 
   @requiresToken()
   async afterGoLive(context: StreamingContext) {
-    // Twitch doesn't recognize live streams right away, so we introduce a delay
-    return of(1)
-      .pipe(
-        delay(TWITCH_STREAM_LIVE_DELAY),
-        flatMap(_ => this.getStreams()),
-        map(streams => {
-          // Assume the first stream is the stream we want to set tags for
-          head(streams)
-            .map(stream => stream.id)
-            .map(updateTags(this.getRawHeaders(true, true))(context.twitchTags));
-        }),
-      )
-      .toPromise();
+    updateTags(this.getRawHeaders(true, true))(context.twitchTags)(this.twitchId);
   }
 }

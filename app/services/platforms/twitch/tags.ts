@@ -123,7 +123,7 @@ const addParam = (op: 'add' | 'remove', tags: Array<TwitchTagWithLabel>) => {
     return {};
   }
 
-  return { [op]: tags.map(tag => tag.tag_id).join(',') };
+  return { [op]: tags.map(tag => tag.tag_id) };
 };
 
 export const updateTags = (headers: TwitchRequestHeaders) => (

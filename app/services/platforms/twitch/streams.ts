@@ -1,9 +1,9 @@
 import { Observable } from 'rxjs/Observable';
 import { ajax } from 'rxjs/observable/dom/ajax';
-import { map } from 'rxjs/operator/map';
+import 'rxjs/add/operator/map';
+import { head } from 'fp-ts/lib/Array';
 import { TwitchPagination } from './pagination';
 import { TwitchRequestHeaders } from './tags';
-import 'rxjs/add/operator/map';
 
 export type Stream = {
   id: string;
@@ -17,6 +17,7 @@ export type Stream = {
   started_at: string;
   language: string;
   thumbnail_url: string;
+  tag_ids: string[];
 };
 
 export type StreamsResponse = {
@@ -24,7 +25,15 @@ export type StreamsResponse = {
   pagination: TwitchPagination;
 };
 
-export const getUserStreams = (userId: string, headers: TwitchRequestHeaders) =>
+export const getUserStreams = (
+  userId: string,
+  headers: TwitchRequestHeaders
+): Observable<Array<Stream>> =>
   ajax
     .getJSON<StreamsResponse>(`https://api.twitch.tv/helix/streams?user_id=${userId}`, headers)
     .map(response => response.data);
+
+export const getStreamTags = (userId: string, headers: TwitchRequestHeaders) =>
+  getUserStreams(userId, headers)
+    .map(streams => head(streams).map(s => s.tag_ids).getOrElse([]))
+    .toPromise();

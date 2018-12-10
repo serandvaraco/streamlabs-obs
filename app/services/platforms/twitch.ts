@@ -8,8 +8,12 @@ import { head } from 'fp-ts/lib/Array';
 import { delay, flatMap, map } from 'rxjs/operators';
 import { of } from 'rxjs/observable/of';
 import { StreamingContext } from '../streaming';
-import { getUserStreams } from './twitch/streams';
-import { getAllTags, TwitchRequestHeaders, updateTags } from './twitch/tags';
+import { getUserStreams, getStreamTags } from './twitch/streams';
+import {
+  getAllTags,
+  TwitchRequestHeaders,
+  updateTags
+} from './twitch/tags';
 import { IChannelInfo, IGame, IPlatformAuth, IPlatformService } from '.';
 
 /**
@@ -193,6 +197,11 @@ export class TwitchService extends Service implements IPlatformService {
   @requiresToken()
   getAllTags() {
     return getAllTags(this.getRawHeaders(true));
+  }
+
+  @requiresToken()
+  getStreamTags() {
+    return getStreamTags(this.twitchId, this.getRawHeaders(true, true));
   }
 
   searchCommunities(searchString: string) {

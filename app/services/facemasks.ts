@@ -251,7 +251,7 @@ export class FacemasksService extends PersistentStatefulService<IFacemasksServic
 
       this.setDownloadProgress(missingMasks.map(mask => mask.uuid));
 
-      Promise.all(downloads).then((responses) => {
+      Promise.all(downloads).then(() => {
         this.ensureModtimes(settings.facemasks);
       }).catch(err => {
         console.log(err);
@@ -303,14 +303,7 @@ export class FacemasksService extends PersistentStatefulService<IFacemasksServic
   }
 
   updateFacemaskSettings(settingsData: IFacemaskSettings) {
-    return new Promise((resolve, reject) => {
-      this.postFacemaskSettingsUpdate(settingsData).then(response => {
-        this.startup();
-        resolve('success');
-      }).catch(err => {
-        reject('error');
-      })
-    });
+    return this.postFacemaskSettingsUpdate(settingsData).then(() => this.startup());
   }
 
   postFacemaskSettingsUpdate(settingsData: IFacemaskSettings) {
@@ -319,7 +312,7 @@ export class FacemasksService extends PersistentStatefulService<IFacemasksServic
     const headers = authorizedHeaders(this.apiToken);
     headers.append('Content-Type', 'text/json');
 
-    const request = new Request(url, { 
+    const request = new Request(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(settingsData)
